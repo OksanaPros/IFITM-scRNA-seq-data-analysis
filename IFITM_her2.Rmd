@@ -1,0 +1,568 @@
+---
+help(title: "IFITM"
+author: "Oksana Prosniakova"
+
+output: html_document
+---
+
+
+```{r, include = FALSE}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+library(SingleCellExperiment)
+library(celldex)
+library(SingleR)
+library(scRNAseq)
+```
+
+### Loading data
+
+```{r}
+sample1_data <- Read10X(data.dir = "./CID3586", gene.column = 1)
+sample2_data <- Read10X(data.dir = "./CID3838", gene.column = 1)
+sample3_data <- Read10X(data.dir = "./CID3921", gene.column = 1)
+sample4_data <- Read10X(data.dir = "./CID4066", gene.column = 1)
+sample5_data <- Read10X(data.dir = "./CID45171", gene.column = 1)
+```
+
+### Creating Seurat object
+
+```{r}
+sample1 <- CreateSeuratObject(counts = sample1_data, project = "sample1", min.cells = 3, min.features = 200)
+sample2 <- CreateSeuratObject(counts = sample2_data, project = "sample2", min.cells = 3, min.features = 200)
+sample3 <- CreateSeuratObject(counts = sample3_data, project = "sample3", min.cells = 3, min.features = 200)
+sample4 <- CreateSeuratObject(counts = sample4_data, project = "sample4", min.cells = 3, min.features = 200)
+sample5 <- CreateSeuratObject(counts = sample5_data, project = "sample5", min.cells = 3, min.features = 200)
+```
+
+
+### Merging objects together
+
+```{r}
+ifitm <- merge(sample1, y = c(sample2, sample3, sample4, sample5))
+```
+
+### Quality control
+
+```{r}
+ifitm[["percent.mito"]] <- PercentageFeatureSet(ifitm, pattern = "^MT-")
+```
+
+```{r}
+png(filename="./new_plots/vlnplot_before.png", width = 1500, height = 500)
+VlnPlot(ifitm, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), ncol = 3)
+dev.off()
+```
+
+
+```{r}
+
+plot1 <- FeatureScatter(ifitm, feature1 = "nCount_RNA", feature2 = "percent.mito")
+plot3 <- FeatureScatter(ifitm, feature1 = "nFeature_RNA", feature2 = "percent.mito")+ scale_x_log10()
+plot2 <- FeatureScatter(ifitm, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + scale_x_log10() + scale_y_log10()
+plot1 + plot2 + plot3
+dev.print(device = png, filename = "./new_plots/scatterplot_before.png", width = 1500, height = 500)
+dev.off()
+```
+
+Based on the scatter plots I decided to filter cells that have unique feature counts less than 300 and also cells that have >12% mitochondrial gene counts.
+
+```{r}
+ifitm <- subset(ifitm, subset = nFeature_RNA > 300 & percent.mito < 12)
+```
+
+### plots after QC
+
+```{r}
+png(filename="./new_plots/vlnplot_after.png", width = 1500, height = 500)
+VlnPlot(ifitm, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), ncol = 3)
+dev.off()
+
+plot1 <- FeatureScatter(ifitm, feature1 = "nCount_RNA", feature2 = "percent.mito")
+plot3 <- FeatureScatter(ifitm, feature1 = "nFeature_RNA", feature2 = "percent.mito")+ scale_x_log10()
+plot2 <- FeatureScatter(ifitm, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + scale_x_log10() + scale_y_log10()
+plot1 + plot2 + plot3
+dev.print(device = png, filename = "./new_plots/scatterplot_after.png", width = 1500, height = 500)
+dev.off()
+```
+### Top expressed genes
+
+```{r}
+library(Matrix)
+C <- ifitm@assays$RNA@counts
+C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
+most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
+
+png("./new_plots/top20_genes1.png", width = 1200, height = 720, )
+boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell", 
+        col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
+dev.off()
+```
+
+### Filtering out mitochondrial and ribosomal transcripts
+
+```{r}
+# Filter MALAT1
+ifitm <- ifitm[!grepl("MALAT1", rownames(ifitm)), ]
+dim(ifitm)
+# Filter Mitochondrial
+ifitm <- ifitm[!grepl(pattern = "^MT-", rownames(ifitm)), ]
+dim(ifitm)
+# Filter Ribosomal gene (optional if that is a problem on your data) 
+ifitm <- ifitm[!grepl('^RP[SL]', rownames(ifitm)), ]
+dim(ifitm)
+```
+
+### Top expressed genes after filtering
+
+```{r}
+C <- ifitm@assays$RNA@counts
+C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
+most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
+
+png("./new_plots/top20_genes_after_filter.png", width = 1200, height = 720, )
+boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell", 
+        col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
+dev.off()
+```
+
+### Normalization
+
+```{r}
+ifitm <- SCTransform(ifitm, vars.to.regress = "percent.mito", verbose = FALSE, conserve.memory = TRUE)
+```
+
+
+
+### Cell cycle scoring and regression
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+ifitm <- CellCycleScoring(ifitm, s.features = s.genes, g2m.features = g2m.genes, assay = 'SCT', set.ident = TRUE)
+#ifitm <- RunPCA(ifitm, features = c(s.genes, g2m.genes))
+ifitm <- RunPCA(ifitm, verbose = FALSE)
+Idents(ifitm) <- "Phase"
+png(filename="./new_plots/cellcycle_before.png")
+DimPlot(ifitm)
+dev.off()
+
+png(filename="./new_plots/elbowplot_cellcycle.png")
+ElbowPlot(ifitm)
+dev.off()
+
+ifitm <- RunUMAP(ifitm, dims = 1:20, verbose = FALSE)
+
+png(filename="./new_plots/cellcycle_umap_before.png")
+DimPlot(ifitm, label = TRUE) + NoLegend()
+dev.off()
+
+# ifitm <- SCTransform(ifitm, assay = 'RNA', new.assay.name = 'SCT',  vars.to.regress = c("percent.mito", "S.Score", "G2M.Score"), verbose = FALSE, conserve.memory = TRUE)
+# ifitm <- RunPCA(ifitm, features = c(s.genes, g2m.genes))
+# 
+# png(filename="./new_plots/cellcycle_after1.png")
+# DimPlot(ifitm)
+# dev.off()
+
+#ifitm <- RunUMAP(ifitm, dims = 1:20, verbose = FALSE)
+
+#png(filename="./new_plots/cellcycle_umap_after.png")
+#DimPlot(ifitm, label = TRUE) + NoLegend()
+#dev.off()
+```
+
+### PCA and UMAP before  integration
+
+### dim reduction + clustering
+
+```{r}
+ifitm <- RunPCA(ifitm, verbose = FALSE)
+```
+
+
+```{r}
+png(filename="./new_plots/elbowplot_before_integration.png")
+ElbowPlot(ifitm)
+dev.off()
+```
+
+```{r}
+ifitm <- RunUMAP(ifitm, dims = 1:20, verbose = FALSE)
+
+Idents(ifitm) <- "orig.ident"
+png(filename="./new_plots/dimplot_before_integration.png")
+DimPlot(ifitm, label = TRUE) + NoLegend()
+dev.off()
+```
+
+### Integration
+
+```{r}
+ifitm.list <- SplitObject(ifitm, split.by = "orig.ident")
+
+features <- SelectIntegrationFeatures(object.list = ifitm.list)
+ifitm.list <- PrepSCTIntegration(object.list = ifitm.list, anchor.features = features)
+ifitm.anchors <- FindIntegrationAnchors(object.list = ifitm.list, anchor.features = features, normalization.method = 'SCT')
+ifitm.combined <- IntegrateData(anchorset = ifitm.anchors, normalization.method = 'SCT')
+
+```
+
+
+### dim reduction + clustering
+
+```{r}
+ifitm.combined <- RunPCA(ifitm.combined, verbose = FALSE)
+```
+
+
+```{r}
+png(filename="./new_plots/elbowplot_integration.png")
+ElbowPlot(ifitm.combined)
+dev.off()
+```
+
+```{r}
+ifitm.combined <- RunUMAP(ifitm.combined, dims = 1:20, verbose = FALSE)
+
+png(filename="./new_plots/dimplot_integrated.png")
+DimPlot(ifitm.combined, label = TRUE) + NoLegend()
+dev.off()
+
+
+ifitm.combined <- FindNeighbors(ifitm.combined, dims = 1:20, verbose = FALSE)
+ifitm.combined <- FindClusters(ifitm.combined, verbose = FALSE, resolution = seq(0.3, 1, by = 0.1))
+
+
+```
+
+Clusters with 0.7
+
+```{r}
+Idents(ifitm.combined) <- 'integrated_snn_res.0.7'
+png(filename="./new_plots/dimplot_res0.7.png")
+DimPlot(ifitm.combined, reduction = 'umap', label = TRUE) + NoLegend()
+dev.off()
+
+```
+
+Clusters with 0.3
+
+```{r}
+Idents(ifitm.combined) <- 'integrated_snn_res.0.3'
+png(filename="./new_plots/dimplot_res0.3.png")
+DimPlot(ifitm.combined, reduction = 'umap', label = TRUE) + NoLegend()
+dev.off()
+
+```
+
+Clusters with 1
+
+```{r}
+Idents(ifitm.combined) <- 'integrated_snn_res.1'
+png(filename="./new_plots/dimplot_res1.png")
+DimPlot(ifitm.combined, reduction = 'umap', label = TRUE) + NoLegend()
+dev.off()
+
+```
+
+### IFITM expression
+
+```{r}
+png(filename="./new_plots/IFITMplot1.png", width = 1200, height = 600)
+FeaturePlot(ifitm.combined, features = c("IFITM1", "IFITM2", "IFITM3", "IFITM5", "IFITM10"), cols = c("lightgrey", "yellow", "red"))#+ scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+dev.off()
+```
+
+### SingleR
+
+```{r}
+hpca.ref <- celldex::HumanPrimaryCellAtlasData()
+#organs.ref <- HeOrganAtlasData()
+
+ifitm.comb.sce <- as.SingleCellExperiment(DietSeurat(ifitm.combined))
+
+ifitm.annot.main_hpca <- SingleR(test = ifitm.comb.sce, ref = hpca.ref, assay.type.test=1, labels = hpca.ref$label.main)
+ifitm.annot.fine_hpca <- SingleR(test = ifitm.comb.sce, ref = hpca.ref, assay.type.test=1, labels = hpca.ref$label.fine)
+
+#ifitm.annot.main_org <- SingleR(test = ifitm.comb.sce, ref = organs.ref, assay.type.test=1, labels = organs.ref$label.main)
+#ifitm.annot.fine_org <- SingleR(test = ifitm.comb.sce, ref = organs.ref, assay.type.test=1, labels = organs.ref$label.fine)
+
+table_hpca <- table(ifitm.annot.main_hpca$pruned.labels)
+table_hpca_fine <- table(ifitm.annot.fine_hpca$pruned.labels)
+
+ifitm.combined@meta.data$annot.main_hpca <- ifitm.annot.main_hpca$pruned.labels
+ifitm.combined@meta.data$annot.fine_hpca <- ifitm.annot.fine_hpca$pruned.labels
+
+#ifitm.combined@meta.data$annot.main_org <- ifitm.annot.main_org$pruned.labels
+#ifitm.combined@meta.data$annot.fine_org <- ifitm.annot.fine_org$pruned.labels
+
+ifitm.combined <- SetIdent(ifitm.combined, value = "annot.fine_hpca")
+
+png(filename="./new_plots/singleR_annot_hpca_fine.png")
+DimPlot(ifitm.combined, label = T , repel = T, label.size = 4) + NoLegend()
+dev.off()
+
+# ifitm.combined <- SetIdent(ifitm.combined, value = "annot.main_org")
+# 
+# png(filename="./new_plots/singleR_annot_org.png")
+# DimPlot(ifitm.combined, label = T , repel = T, label.size = 4) + NoLegend()
+# dev.off()
+```
+### iNTERFERONS
+
+```{r}
+
+png(filename="./new_plots/inf_gamma1.png")
+FeaturePlot(ifitm.combined, features = c("IFNG"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+
+```
+
+### Markers for cell types
+
+#### healthy cells
+
+```{r}
+png(filename="./new_plots/healthy_int.png")
+FeaturePlot(ifitm.combined, features = c("VIM"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### cancer stem cells
+
+```{r}
+png(filename="./new_plots/cancer_int.png")
+FeaturePlot(ifitm.combined, features = c("CD44", "CD24", "ALDH1", "PROM1", "HER2"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### immune cells
+
+```{r}
+png(filename="./new_plots/immune_int.png")
+FeaturePlot(ifitm.combined, features = c("CD83", "CD14", "HLA-DRA", "CD86"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### B cells
+
+```{r}
+png(filename="./new_plots/b_cells.png")
+FeaturePlot(ifitm.combined, features = c("CD19", "MS4A1", "PNOC", "BANK1"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### B cells memory
+
+```{r}
+png(filename="./new_plots/memory_b_cells.png")
+FeaturePlot(ifitm.combined, features = c('SIT1', 'ZBTB32', 'GPR18', 'STAP1', 'TMEM156'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+
+#### B cells naive
+
+```{r}
+png(filename="./new_plots/naive_b_cells.png", width = 1000, height = 500)
+FeaturePlot(ifitm.combined, features = c("LINC00926", 'TCL1A'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### CD45+ cells
+
+```{r}
+png(filename="./new_plots/CD45+.png")
+FeaturePlot(ifitm.combined, features = c("PTPRC"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### CD8 T cells
+
+```{r}
+png(filename="./new_plots/CD8.png")
+FeaturePlot(ifitm.combined, features = c("CD8A", "CD8B", 'GZMB', 'ZFP36', 'GZMK', 'IFNG'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Cytotoxic cells
+
+```{r}
+png(filename="./new_plots/Cytotoxic.png", width = 1500, height = 1500)
+FeaturePlot(ifitm.combined, features = c("CTSW", "GNLY", "GZMA", "GZMB", "GZMH", "KLRB1", "KLRD1", "KLRK1", "NKG7", "PRF1"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Dendritic  cells
+
+```{r}
+png(filename="./new_plots/Dendritic .png")
+FeaturePlot(ifitm.combined, features = c("CCL13", "CD209", "HSD11B1"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Exhausted CD8  cells
+
+```{r}
+png(filename="./new_plots/Exhausted_CD8.png")
+FeaturePlot(ifitm.combined, features = c("CD244", "EOMES", "LAG3", "PTGER4"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Endothelial  cells
+
+```{r}
+png(filename="./new_plots/Endothelial.png")
+FeaturePlot(ifitm.combined, features = c("PECAM1", 'FLT1', 'EMCN', 'PTPRB'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Epithelial  cells
+
+```{r}
+png(filename="./new_plots/Epithelial.png")
+FeaturePlot(ifitm.combined, features = c("KRT14", "EPCAM", "FN1", "SPARC"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### CANCER-ASSOCIATED Fibroblasts
+
+```{r}
+png(filename="./new_plots/Fibroblasts.png")
+FeaturePlot(ifitm.combined, features = c("COL1A1", 'COL6A2', 'PDGFRB', 'POSTN'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+
+
+#### Macrophages
+
+```{r}
+png(filename="./new_plots/Macrophages.png")
+FeaturePlot(ifitm.combined, features = c("HLA-DRA", "CD68", "MS4A4A", 'FGL2'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+
+
+#### NK CD56dim cells
+
+```{r}
+png(filename="./new_plots/NK CD56dim_cells.png", width = 1000, height = 500)
+FeaturePlot(ifitm.combined, features = c("IL21R", "KIR2DL3", "KIR3DL1/2"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### NK cells
+
+```{r}
+png(filename="./new_plots/NK_cells.png")
+FeaturePlot(ifitm.combined, features = c("NCR1", 'KLRD1', "GNLY", 'NKG7'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Neutrophils
+
+```{r}
+png(filename="./new_plots/Neutrophils.png", width = 1000, height = 500)
+FeaturePlot(ifitm.combined, features = c("CEACAM3", "CSF3R", "FCAR", "FCGR3A/B", "FPR1", "S100A12", "SIGLEC5"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### T cells
+
+```{r}
+png(filename="./new_plots/T_cells.png")
+FeaturePlot(ifitm.combined, features = c("CD3D", "CD3E", "CD3G", "CD6", "SH2D1A", "TRAT1", 'S100A4'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Th1 cells
+
+```{r}
+png(filename="./new_plots/Th1_cells.png")
+FeaturePlot(ifitm.combined, features = c("TBX21"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Th (CD4) cells
+
+```{r}
+png(filename="./new_plots/cd4_cells_1.png")
+FeaturePlot(ifitm.combined, features = c("CCR7", 'FOXP3', 'IL7R', 'CXCL13'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Tregs
+
+```{r}
+png(filename="./new_plots/Tregs.png")
+FeaturePlot(ifitm.combined, features = c("FOXP3", 'CTLA4', 'IKZF2'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### Mammary gland cells
+
+#### Luminal epithelial cells
+
+```{r}
+png(filename="./new_plots/mammary_luminal.png")
+FeaturePlot(ifitm.combined, features = c('KRT8', 'SERPINA1', 'CD9', 'AGR3'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+#### Mammary epithelial cells
+
+```{r}
+png(filename="./new_plots/mammary.png")
+FeaturePlot(ifitm.combined, features = c('CLDN4', 'RARRES1', 'KRT7', 'NNMT'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### Keratinocytes
+
+```{r}
+png(filename="./new_plots/Keratinocytes.png")
+FeaturePlot(ifitm.combined, features = c('LCN2', 'KRT16', 'PI3', 'KRT15'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### cHONDROCYTES
+
+```{r}
+png(filename="./new_plots/Chondrocytes.png")
+FeaturePlot(ifitm.combined, features = c('COL6A1', 'EMP1', 'DLK1', 'CYTL1'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### SMOOTH MUSCLE CELLS
+
+```{r}
+png(filename="./new_plots/SMOOTH MUSCLE.png", width = 1500, height = 1500)
+FeaturePlot(ifitm.combined, features = c('ACTA2', 'MYLK', "WFDC1", "MAP3K7CL"), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### MONOCYTES
+
+```{r}
+png(filename="./new_plots/monocytes.png")
+FeaturePlot(ifitm.combined, features = c('APOBEC3A', 'IL1B', 'CFP'), cols = c("lightgrey", "yellow", "red"))
+dev.off()
+```
+
+### Annotation of the clusters
+
+```{r}
+new.cluster.ids <- c("T cells", "CD8 T cells", "CD8 T cells", "T cells", "Tregs", "Mammary epithelial cells", "T cells", "Fibroblasts", "Macrophages", "Luminal epithelial cells", "Smooth muscle cells", "CD4 T cells", "NK cells", "Endothelial cells", "B cells", "c15", "Monocytes", "Epithelial cells", "c18", "c19", "c20")
+
+names(new.cluster.ids) <- levels(ifitm.combined)
+ifitm.combined <- RenameIdents(ifitm.combined, new.cluster.ids)
+
+png(filename="./new_plots/dimplot_renamed.png")
+DimPlot(ifitm.combined, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+dev.off()
+```

@@ -107,10 +107,10 @@ dev.off()
 # Filter MALAT1
 ifitm <- ifitm[!grepl("MALAT1", rownames(ifitm)), ]
 dim(ifitm)
-# Filter Mitochondrial
+# Filter mitochondrial genes
 ifitm <- ifitm[!grepl(pattern = "^MT-", rownames(ifitm)), ]
 dim(ifitm)
-# Filter Ribosomal gene (optional if that is a problem on your data) 
+# Filter ribosomal genes
 ifitm <- ifitm[!grepl('^RP[SL]', rownames(ifitm)), ]
 dim(ifitm)
 ```
@@ -143,7 +143,7 @@ s.genes <- cc.genes$s.genes
 g2m.genes <- cc.genes$g2m.genes
 
 ifitm <- CellCycleScoring(ifitm, s.features = s.genes, g2m.features = g2m.genes, assay = 'SCT', set.ident = TRUE)
-#ifitm <- RunPCA(ifitm, features = c(s.genes, g2m.genes))
+
 ifitm <- RunPCA(ifitm, verbose = FALSE)
 Idents(ifitm) <- "Phase"
 png(filename="./new_plots/cellcycle_before.png")
@@ -428,7 +428,7 @@ FeaturePlot(ifitm.combined, features = c("KRT14", "EPCAM", "FN1", "SPARC"), cols
 dev.off()
 ```
 
-#### CANCER-ASSOCIATED Fibroblasts
+#### Cancer-associated fibroblasts
 
 ```{r}
 png(filename="./new_plots/Fibroblasts.png")
@@ -530,7 +530,7 @@ FeaturePlot(ifitm.combined, features = c('LCN2', 'KRT16', 'PI3', 'KRT15'), cols 
 dev.off()
 ```
 
-### cHONDROCYTES
+### Chondrocytes
 
 ```{r}
 png(filename="./new_plots/Chondrocytes.png")
@@ -538,7 +538,7 @@ FeaturePlot(ifitm.combined, features = c('COL6A1', 'EMP1', 'DLK1', 'CYTL1'), col
 dev.off()
 ```
 
-### SMOOTH MUSCLE CELLS
+### Smooth muscle cells
 
 ```{r}
 png(filename="./new_plots/SMOOTH MUSCLE.png", width = 1500, height = 1500)
@@ -546,7 +546,7 @@ FeaturePlot(ifitm.combined, features = c('ACTA2', 'MYLK', "WFDC1", "MAP3K7CL"), 
 dev.off()
 ```
 
-### MONOCYTES
+### Monocytes
 
 ```{r}
 png(filename="./new_plots/monocytes.png")

@@ -160,18 +160,12 @@ png(filename="./new_plots/cellcycle_umap_before.png")
 DimPlot(ifitm, label = TRUE) + NoLegend()
 dev.off()
 
-# ifitm <- SCTransform(ifitm, assay = 'RNA', new.assay.name = 'SCT',  vars.to.regress = c("percent.mito", "S.Score", "G2M.Score"), verbose = FALSE, conserve.memory = TRUE)
-# ifitm <- RunPCA(ifitm, features = c(s.genes, g2m.genes))
-# 
-# png(filename="./new_plots/cellcycle_after1.png")
-# DimPlot(ifitm)
-# dev.off()
-
-#ifitm <- RunUMAP(ifitm, dims = 1:20, verbose = FALSE)
-
-#png(filename="./new_plots/cellcycle_umap_after.png")
-#DimPlot(ifitm, label = TRUE) + NoLegend()
-#dev.off()
+ifitm <- SCTransform(ifitm, assay = 'RNA', new.assay.name = 'SCT',  vars.to.regress = c("percent.mito", "S.Score", "G2M.Score"), verbose = FALSE, conserve.memory = TRUE)
+ifitm <- RunPCA(ifitm, features = c(s.genes, g2m.genes))
+ 
+png(filename="./new_plots/cellcycle_after1.png")
+DimPlot(ifitm)
+dev.off()
 ```
 
 ### PCA and UMAP before  integration
